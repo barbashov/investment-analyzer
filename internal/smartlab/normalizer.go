@@ -4,8 +4,9 @@ package smartlab
 // symbol with "P". smart-lab.ru hosts preferred-share dividend tables under the
 // common-stock URL (e.g. SBERP data lives on /q/SBER/dividend/), so we fold
 // the trailing P when building the fetch URL. Mirrors
-// ../smartlab-dividend-fetcher/internal/domain/tickers/normalizer.go so we
-// can update the two lists independently if needed.
+// ../smartlab-dividend-fetcher/internal/domain/tickers/normalizer.go
+// (https://github.com/barbashov/smartlab-dividend-fetcher) so we can update
+// the two lists independently if needed.
 var tickersPrefs = map[string]struct{}{
 	"BANEP": {}, "BISVP": {}, "BSPBP": {}, "CNTLP": {}, "DZRDP": {}, "GAZAP": {}, "HIMCP": {},
 	"IGSTP": {}, "JNOSP": {}, "KAZTP": {}, "KCHEP": {}, "KGKCP": {}, "KRKNP": {}, "KRKOP": {},

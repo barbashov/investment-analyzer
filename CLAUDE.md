@@ -66,5 +66,5 @@ projected rows). Historical and projected payouts share the same table; filter w
 
 ## Reference projects
 
-- `../synocli` — visual + architectural template (Cobra + Lipgloss, `internal/cli` + `internal/cmdutil` split). Don't copy its session/auth machinery — investment-analyzer is stateless against MOEX (no login).
-- `../smartlab-dividend-fetcher` — the source we ported into `internal/smartlab/` to fill the board-recommended-dividend gap that MOEX ISS doesn't cover. Our local copy is self-contained (no cross-repo import) and uses `ReplaceSmartlabDividends` semantics so revisions/cancellations propagate. Preferred shares still fold to the common URL (SBERP → /q/SBER/dividend/) because smart-lab hosts them together.
+- `../synocli` ([github.com/barbashov/synocli](https://github.com/barbashov/synocli)) — visual + architectural template (Cobra + Lipgloss, `internal/cli` + `internal/cmdutil` split). Don't copy its session/auth machinery — investment-analyzer is stateless against MOEX (no login).
+- `../smartlab-dividend-fetcher` ([github.com/barbashov/smartlab-dividend-fetcher](https://github.com/barbashov/smartlab-dividend-fetcher)) — the source we ported into `internal/smartlab/` to fill the board-recommended-dividend gap that MOEX ISS doesn't cover. Our local copy is self-contained (no cross-repo import) and uses `ReplaceSmartlabDividends` semantics so revisions/cancellations propagate. Preferred shares still fold to the common URL (SBERP → /q/SBER/dividend/) because smart-lab hosts them together.
