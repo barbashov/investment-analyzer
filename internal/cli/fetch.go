@@ -19,7 +19,7 @@ func newFetchCmd(ac *appContext) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "fetch",
-		Short: "Fetch MOEX prices+dividends for one ticker (low-level; use `invest update` for everyday refresh)",
+		Short: "Fetch MOEX + smart-lab data for one ticker (low-level; use `invest update` for everyday refresh)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(ticker) == "" {
@@ -31,21 +31,32 @@ func newFetchCmd(ac *appContext) *cobra.Command {
 			}
 			defer func() { _ = st.Close() }()
 
+			t := strings.ToUpper(ticker)
 			if refresh {
 				// Reset the per-ticker fetch state so we re-pull from scratch.
-				if err := st.ResetFetchState(strings.ToUpper(ticker)); err != nil {
+				if err := st.ResetFetchState(t); err != nil {
 					return apperr.Wrap("store_write", "reset fetch_state", 2, err)
 				}
 			}
 
-			updater := moex.NewUpdater(moex.NewClient(), st)
-			res := updater.UpdateTicker(context.Background(), strings.ToUpper(ticker), refresh)
-			printUpdateResult(ac, res)
-			if res.PriceErr != nil {
-				return apperr.Wrap("moex", "price fetch", 3, res.PriceErr)
+			ctx := context.Background()
+			refreshers := buildRefreshers(st)
+			_, _ = fmt.Fprintf(ac.out, "%s:\n", t)
+
+			var failed int
+			for _, r := range refreshers {
+				class := assetClassForRouting(st, t)
+				if !r.AppliesTo(class) {
+					continue
+				}
+				res := r.RefreshTicker(ctx, t, refresh)
+				printRefreshResult(ac, res)
+				if res.Err != nil {
+					failed++
+				}
 			}
-			if res.DividendErr != nil {
-				return apperr.Wrap("moex", "dividend fetch", 3, res.DividendErr)
+			if failed > 0 {
+				return apperr.New("fetch_partial", fmt.Sprintf("%d source(s) failed", failed), 3)
 			}
 			return nil
 		},
@@ -58,7 +69,7 @@ func newFetchCmd(ac *appContext) *cobra.Command {
 func newUpdateCmd(ac *appContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Refresh MOEX prices and dividends for all currently held tickers",
+		Short: "Refresh MOEX prices/dividends and smart-lab projections for all current holdings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st, err := store.Open(ac.opts.DBPath)
@@ -76,40 +87,29 @@ func newUpdateCmd(ac *appContext) *cobra.Command {
 				return nil
 			}
 
-			updater := moex.NewUpdater(moex.NewClient(), st)
 			ctx := context.Background()
+			refreshers := buildRefreshers(st)
 			var failed int
 			for i, t := range tickers {
-				_, _ = fmt.Fprintf(ac.out, "[%d/%d] ", i+1, len(tickers))
-				res := updater.UpdateTicker(ctx, t, true) // bypass dividend staleness on user-initiated update
-				printUpdateResult(ac, res)
-				if res.PriceErr != nil || res.DividendErr != nil {
-					failed++
+				_, _ = fmt.Fprintf(ac.out, "[%d/%d] %s\n", i+1, len(tickers), t)
+				for _, r := range refreshers {
+					class := assetClassForRouting(st, t)
+					if !r.AppliesTo(class) {
+						continue
+					}
+					// force=true bypasses per-source staleness windows on user-initiated update.
+					res := r.RefreshTicker(ctx, t, true)
+					printRefreshResult(ac, res)
+					if res.Err != nil {
+						failed++
+					}
 				}
 			}
 			if failed > 0 {
-				return apperr.New("update_partial", fmt.Sprintf("%d ticker(s) failed", failed), 3)
+				return apperr.New("update_partial", fmt.Sprintf("%d source(s) failed", failed), 3)
 			}
 			return nil
 		},
 	}
 	return cmd
-}
-
-func printUpdateResult(ac *appContext, r moex.UpdateResult) {
-	parts := []string{fmt.Sprintf("%-12s [%s]", r.Ticker, r.AssetClass)}
-	if r.PriceErr != nil {
-		parts = append(parts, "prices=ERR("+r.PriceErr.Error()+")")
-	} else {
-		parts = append(parts, fmt.Sprintf("+%d prices", r.NewPrices))
-	}
-	switch {
-	case r.DividendErr != nil:
-		parts = append(parts, "dividends=ERR("+r.DividendErr.Error()+")")
-	case r.DividendSkip:
-		parts = append(parts, "dividends=cached")
-	default:
-		parts = append(parts, fmt.Sprintf("+%d dividends", r.NewDividends))
-	}
-	_, _ = fmt.Fprintln(ac.out, strings.Join(parts, "  "))
 }

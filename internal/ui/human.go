@@ -129,6 +129,13 @@ func PrintKVBlock(w io.Writer, title string, fields []KVField) {
 
 // PrintTable renders a styled table to w.
 func PrintTable(w io.Writer, headers []string, rows [][]string) {
+	PrintTableWithRowStyles(w, headers, rows, nil)
+}
+
+// PrintTableWithRowStyles renders a styled table with per-row dimming.
+// `dim` is a parallel boolean slice: dim[i] == true renders row i in a muted
+// color (used to flag projected/speculative rows). Pass nil for no dimming.
+func PrintTableWithRowStyles(w io.Writer, headers []string, rows [][]string, dim []bool) {
 	ui := NewHumanUI(w)
 	t := table.New().
 		Headers(headers...).
@@ -141,6 +148,9 @@ func PrintTable(w io.Writer, headers []string, rows [][]string) {
 					s = s.Foreground(lipgloss.AdaptiveColor{Light: "63", Dark: "111"})
 				}
 				return s
+			}
+			if row >= 0 && row < len(dim) && dim[row] && ui.Styled {
+				return ui.style().Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "240"})
 			}
 			return ui.style()
 		})

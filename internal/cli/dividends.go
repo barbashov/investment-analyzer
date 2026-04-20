@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -111,6 +112,11 @@ func newDividendsCmd(ac *appContext) *cobra.Command {
 			rows = append(rows, totalRow)
 
 			ui.PrintTable(ac.out, headers, rows)
+
+			// Projected section: synthesize upcoming payouts from smart-lab
+			// announcements (dedup'd against MOEX confirmations) and render
+			// them in the same grouping as the historical table, dimmed.
+			printProjectedSection(ac, st, allTxs, keyFn, headerLabel, groupBy, gross)
 			return nil
 		},
 	}
@@ -128,6 +134,89 @@ func formatYield(yield float64) string {
 		return "—"
 	}
 	return ui.FormatPct(yield * 100)
+}
+
+// printProjectedSection appends a "Projected (smart-lab, next 90 days)" table
+// below the historical dividends. Values are best-effort: Tax uses the 13%
+// Russian-resident stock heuristic (see portfolio.RUStockTaxRate). Rendered
+// entirely dim to signal uncertainty.
+func printProjectedSection(
+	ac *appContext,
+	st *store.Store,
+	txs []*store.Transaction,
+	keyFn func(portfolio.DividendPayment) string,
+	headerLabel, groupBy string,
+	gross bool,
+) {
+	announcements, err := st.ListAllSmartlabDividends()
+	if err != nil || len(announcements) == 0 {
+		return
+	}
+	moexByTicker := map[string][]store.MOEXDividend{}
+	seen := map[string]bool{}
+	for _, a := range announcements {
+		if seen[a.Ticker] {
+			continue
+		}
+		seen[a.Ticker] = true
+		if divs, err := st.ListMOEXDividends(a.Ticker); err == nil {
+			moexByTicker[a.Ticker] = divs
+		}
+	}
+
+	asOf := time.Now().UTC()
+	projected := portfolio.ProjectPayments(announcements, moexByTicker, txs, asOf)
+	if len(projected) == 0 {
+		return
+	}
+
+	buckets := portfolio.GroupBy(projected, keyFn)
+	if g := strings.ToLower(groupBy); g == "year" || g == "month" {
+		sort.SliceStable(buckets, func(i, j int) bool { return buckets[i].Key < buckets[j].Key })
+	}
+
+	var headers []string
+	if gross {
+		headers = []string{headerLabel, "PAYMENTS", "GROSS", "YIELD"}
+	} else {
+		headers = []string{headerLabel, "PAYMENTS", "GROSS", "TAX", "NET", "YIELD"}
+	}
+
+	rows := make([][]string, 0, len(buckets)+1)
+	dim := make([]bool, 0, len(buckets)+1)
+	var totGross, totTax, totNet, totBookValue float64
+	var totPayments int
+	for _, b := range buckets {
+		row := []string{b.Key, fmt.Sprintf("%d", b.Payments), ui.FormatRUB(b.Gross)}
+		if !gross {
+			row = append(row, ui.FormatRUB(b.Tax), ui.FormatRUB(b.Net))
+		}
+		row = append(row, formatYield(b.Yield))
+		rows = append(rows, row)
+		dim = append(dim, true)
+		totGross += b.Gross
+		totTax += b.Tax
+		totNet += b.Net
+		totBookValue += b.BookValueSum
+		totPayments += b.Payments
+	}
+	var totYield float64
+	if totBookValue > 0 {
+		totYield = totGross / totBookValue
+	}
+	totalRow := []string{"TOTAL", fmt.Sprintf("%d", totPayments), ui.FormatRUB(totGross)}
+	if !gross {
+		totalRow = append(totalRow, ui.FormatRUB(totTax), ui.FormatRUB(totNet))
+	}
+	totalRow = append(totalRow, formatYield(totYield))
+	rows = append(rows, totalRow)
+	dim = append(dim, true)
+
+	_, _ = fmt.Fprintln(ac.out)
+	h := ui.NewHumanUI(ac.out)
+	_, _ = fmt.Fprintln(ac.out, h.Title("Projected (smart-lab, upcoming)"))
+	_, _ = fmt.Fprintln(ac.out, h.Muted("tax estimated at 13% (RU resident, stocks) — heuristic"))
+	ui.PrintTableWithRowStyles(ac.out, headers, rows, dim)
 }
 
 func newDividendsPayoutsCmd(ac *appContext) *cobra.Command {

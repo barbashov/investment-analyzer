@@ -8,6 +8,9 @@ import (
 )
 
 // DividendPayment is a single received dividend, with the ticker resolved if possible.
+// Projected=true rows are synthesized from smart-lab.ru announcements — they do
+// not correspond to a real DIVIDEND transaction and represent a best-effort
+// projection of an upcoming payout (see ProjectPayments).
 type DividendPayment struct {
 	Date      string
 	Ticker    string  // resolved via TickerResolver; "" if unresolved
@@ -21,6 +24,7 @@ type DividendPayment struct {
 	Gross     float64 // Net + Tax
 	BookValue float64 // book value of the position on Date (filled by AnnotatePayments; 0 if unknown)
 	Yield     float64 // Gross / BookValue (filled by AnnotatePayments; 0 if BookValue is 0)
+	Projected bool    // true when synthesized from smart-lab (see ProjectPayments)
 }
 
 // TickerResolver maps an ISIN or asset-name fragment to a ticker. Implementations decide the lookup.

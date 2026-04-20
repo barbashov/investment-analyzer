@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"investment-analyzer/internal/portfolio"
 	"investment-analyzer/internal/store"
@@ -21,7 +23,7 @@ type PayoutRow struct {
 	MOEXHit          bool
 	MOEXGapDays      int  // days between payment date and matched MOEX registry date (>= 0)
 	MOEXCacheEmpty   bool // true when ListMOEXDividends returned no rows for this ticker
-	HoldQty          float64 // qty held on the registry date (used to derive PerShare)
+	HoldQty          float64 // qty held on the registry/ex date (used to derive PerShare)
 }
 
 func (r PayoutRow) Cells() []string {
@@ -37,10 +39,15 @@ func (r PayoutRow) Cells() []string {
 	if r.P.Yield > 0 {
 		yield = ui.FormatPct(r.P.Yield * 100)
 	}
+	status := "confirmed"
+	if r.P.Projected {
+		status = "projected"
+	}
 	return []string{
 		r.P.Date,
 		emptyDash(r.P.Ticker),
 		emptyDash(r.P.Period),
+		status,
 		ui.FormatRUB(r.P.Gross),
 		ui.FormatRUB(r.P.Tax),
 		ui.FormatRUB(r.P.Net),
@@ -52,10 +59,10 @@ func (r PayoutRow) Cells() []string {
 
 func (r PayoutRow) Detail() []ui.KVField {
 	fields := []ui.KVField{
-		{Label: "Account", Value: r.P.Account},
+		{Label: "Account", Value: emptyDash(r.P.Account)},
 		{Label: "Currency", Value: r.P.Currency},
-		{Label: "Asset", Value: r.P.AssetName},
-		{Label: "ISIN", Value: r.P.ISIN},
+		{Label: "Asset", Value: emptyDash(r.P.AssetName)},
+		{Label: "ISIN", Value: emptyDash(r.P.ISIN)},
 	}
 	if r.P.BookValue > 0 {
 		fields = append(fields, ui.KVField{
@@ -63,6 +70,13 @@ func (r PayoutRow) Detail() []ui.KVField {
 			Value: fmt.Sprintf("%s on %s book value (single payment, not annualized)",
 				ui.FormatPct(r.P.Yield*100), ui.FormatRUB(r.P.BookValue)),
 		})
+	}
+	if r.P.Projected {
+		fields = append(fields, ui.KVField{
+			Label: "Source",
+			Value: "smart-lab.ru (board-recommended, not yet MOEX-confirmed). Tax 13% heuristic.",
+		})
+		return fields
 	}
 	if r.MOEXHit {
 		actual := r.P.Gross
@@ -122,6 +136,17 @@ func (r PayoutRow) Match(tokens map[string]string) bool {
 			if !strings.EqualFold(r.P.ISIN, v) {
 				return false
 			}
+		case "status":
+			switch v {
+			case "projected":
+				if !r.P.Projected {
+					return false
+				}
+			case "confirmed":
+				if r.P.Projected {
+					return false
+				}
+			}
 		}
 	}
 	return true
@@ -153,8 +178,7 @@ func Run(st *store.Store) error {
 		moexByTicker[p.Ticker] = divs
 	}
 
-	// Compute holdings as of each payout's date — used to derive per-share value
-	// and cross-reference against MOEX-announced dividends.
+	// Historical rows: one per actual DIVIDEND transaction.
 	rows := make([]browser.Row, 0, len(pays))
 	for _, p := range pays {
 		positions := portfolio.ComputePositions(txs, p.Date)
@@ -190,6 +214,31 @@ func Run(st *store.Store) error {
 		rows = append(rows, row)
 	}
 
+	// Projected rows: synthesized from smart-lab for current holdings.
+	// MOEX dividend cache is loaded lazily above (seeded only from tickers
+	// that have historical payments); ensure we also cover tickers we only
+	// know from smart-lab.
+	if announcements, err := st.ListAllSmartlabDividends(); err == nil && len(announcements) > 0 {
+		for _, a := range announcements {
+			if _, ok := moexByTicker[a.Ticker]; ok {
+				continue
+			}
+			if divs, err := st.ListMOEXDividends(a.Ticker); err == nil {
+				moexByTicker[a.Ticker] = divs
+			}
+		}
+		asOf := time.Now().UTC()
+		currentPositions := portfolio.ComputePositions(txs, asOf.Format("2006-01-02"))
+		projected := portfolio.ProjectPayments(announcements, moexByTicker, txs, asOf)
+		for _, p := range projected {
+			var holdQty float64
+			if pos, ok := currentPositions[p.Ticker]; ok {
+				holdQty = pos.Quantity
+			}
+			rows = append(rows, PayoutRow{P: p, HoldQty: holdQty})
+		}
+	}
+
 	sorts := []browser.SortMode{
 		{Label: "date ↓", Less: func(a, b browser.Row) bool { return a.(PayoutRow).P.Date > b.(PayoutRow).P.Date }},
 		{Label: "date ↑", Less: func(a, b browser.Row) bool { return a.(PayoutRow).P.Date < b.(PayoutRow).P.Date }},
@@ -199,16 +248,34 @@ func Run(st *store.Store) error {
 	}
 
 	m := browser.New("Dividend Payouts",
-		[]string{"DATE", "TICKER", "PERIOD", "GROSS", "TAX", "NET", "QTY", "PER SHR", "YIELD"},
+		[]string{"DATE", "TICKER", "PERIOD", "STATUS", "GROSS", "TAX", "NET", "QTY", "PER SHR", "YIELD"},
 		rows, sorts)
-	m.FilterHelp = "keys: ticker:SBER  account:…  period:2024  isin:RU…  from:YYYY-MM-DD  to:YYYY-MM-DD  (free text matches ticker/asset/period/isin)"
+	m.FilterHelp = "keys: ticker:SBER  status:projected|confirmed  period:2024  isin:RU…  from:YYYY-MM-DD  to:YYYY-MM-DD  account:…  (free text matches ticker/asset/period/isin)"
+
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "240"})
+	m.RowStyle = func(r browser.Row) lipgloss.Style {
+		if r.(PayoutRow).P.Projected {
+			return dimStyle
+		}
+		return lipgloss.NewStyle()
+	}
 
 	m.Footer = func(visible []browser.Row) string {
-		var net float64
+		var net, projectedNet float64
+		var projectedCount int
 		for _, r := range visible {
-			net += r.(PayoutRow).P.Net
+			row := r.(PayoutRow)
+			if row.P.Projected {
+				projectedNet += row.P.Net
+				projectedCount++
+			} else {
+				net += row.P.Net
+			}
 		}
-		return fmt.Sprintf("net visible: %s", ui.FormatRUB(net))
+		if projectedCount == 0 {
+			return fmt.Sprintf("net visible: %s", ui.FormatRUB(net))
+		}
+		return fmt.Sprintf("net: %s received  +  %s projected", ui.FormatRUB(net), ui.FormatRUB(projectedNet))
 	}
 	m.OnKey = func(msg tea.KeyMsg, _ browser.Row) (tea.Cmd, bool) { return nil, false }
 

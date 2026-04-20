@@ -22,11 +22,14 @@ type MOEXPrice struct {
 }
 
 // FetchState records what we've already fetched for a ticker, so update is incremental.
+// last_smartlab_check_at lives here (not in a smartlab-owned table) because the row
+// is a per-ticker freshness ledger shared across external sources.
 type FetchState struct {
 	Ticker               string
 	AssetClass           string
 	LastPriceDate        string // "" if never fetched
 	LastDividendCheckAt  time.Time
+	LastSmartlabCheckAt  time.Time
 }
 
 // UpsertMOEXDividends inserts new MOEX dividend rows; existing PK collisions are silently ignored
@@ -101,14 +104,15 @@ func (s *Store) UpsertMOEXPrices(prices []MOEXPrice, currencyMarket bool) (added
 // GetFetchState returns the saved state or a zero-value struct (with Ticker set) when missing.
 func (s *Store) GetFetchState(ticker string) (FetchState, error) {
 	var (
-		fs       FetchState
-		assetCls string
-		lastDate sql.NullString
-		lastChk  sql.NullString
+		fs           FetchState
+		assetCls     string
+		lastDate     sql.NullString
+		lastChk      sql.NullString
+		lastSmartChk sql.NullString
 	)
-	err := s.DB.QueryRow(`SELECT ticker, asset_class, last_price_date, last_dividend_check_at
+	err := s.DB.QueryRow(`SELECT ticker, asset_class, last_price_date, last_dividend_check_at, last_smartlab_check_at
 	                      FROM fetch_state WHERE ticker = ?`, ticker).
-		Scan(&fs.Ticker, &assetCls, &lastDate, &lastChk)
+		Scan(&fs.Ticker, &assetCls, &lastDate, &lastChk, &lastSmartChk)
 	if errors.Is(err, sql.ErrNoRows) {
 		return FetchState{Ticker: ticker}, nil
 	}
@@ -120,6 +124,11 @@ func (s *Store) GetFetchState(ticker string) (FetchState, error) {
 	if lastChk.Valid {
 		if t, err := time.Parse(time.RFC3339, lastChk.String); err == nil {
 			fs.LastDividendCheckAt = t
+		}
+	}
+	if lastSmartChk.Valid {
+		if t, err := time.Parse(time.RFC3339, lastSmartChk.String); err == nil {
+			fs.LastSmartlabCheckAt = t
 		}
 	}
 	return fs, nil
@@ -140,14 +149,19 @@ func (s *Store) SaveFetchState(fs FetchState) error {
 	if !fs.LastDividendCheckAt.IsZero() {
 		lastChk = fs.LastDividendCheckAt.Format(time.RFC3339)
 	}
+	var lastSmartChk any
+	if !fs.LastSmartlabCheckAt.IsZero() {
+		lastSmartChk = fs.LastSmartlabCheckAt.Format(time.RFC3339)
+	}
 	_, err := s.DB.Exec(`
-		INSERT INTO fetch_state(ticker, asset_class, last_price_date, last_dividend_check_at)
-		VALUES(?,?,?,?)
+		INSERT INTO fetch_state(ticker, asset_class, last_price_date, last_dividend_check_at, last_smartlab_check_at)
+		VALUES(?,?,?,?,?)
 		ON CONFLICT(ticker) DO UPDATE SET
 			asset_class = excluded.asset_class,
 			last_price_date = COALESCE(excluded.last_price_date, last_price_date),
-			last_dividend_check_at = COALESCE(excluded.last_dividend_check_at, last_dividend_check_at)
-	`, fs.Ticker, fs.AssetClass, nullStr(fs.LastPriceDate), lastChk)
+			last_dividend_check_at = COALESCE(excluded.last_dividend_check_at, last_dividend_check_at),
+			last_smartlab_check_at = COALESCE(excluded.last_smartlab_check_at, last_smartlab_check_at)
+	`, fs.Ticker, fs.AssetClass, nullStr(fs.LastPriceDate), lastChk, lastSmartChk)
 	return err
 }
 

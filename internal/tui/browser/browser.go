@@ -40,6 +40,12 @@ type KeyAction func(msg tea.KeyMsg, current Row) (tea.Cmd, bool)
 // Useful for showing per-filter totals (e.g. sum of NET for visible dividends).
 type FooterFn func(visible []Row) string
 
+// RowStyleFn returns a per-row style override. Called for every non-cursor
+// row during View. Return the zero lipgloss.Style to opt out (the default
+// style is then applied). Cursor highlight always takes precedence so the
+// focused row stays readable.
+type RowStyleFn func(Row) lipgloss.Style
+
 // Model is the bubbletea model. Construct with New and run via tea.NewProgram(m).
 type Model struct {
 	Title      string
@@ -47,6 +53,7 @@ type Model struct {
 	Rows       []Row // immutable input
 	OnKey      KeyAction
 	Footer     FooterFn
+	RowStyle   RowStyleFn // optional per-row style (e.g. to dim projected rows)
 	StartHelp  string // optional one-line help shown until the user types
 	FilterHelp string // optional one-line legend shown under the filter input when in filter mode
 
@@ -222,9 +229,12 @@ func (m *Model) View() string {
 			continue
 		}
 		line := renderRow(m.view[idx].Cells(), cols)
-		if idx == m.cursor {
+		switch {
+		case idx == m.cursor:
 			b.WriteString(cursorStyle.Render(line))
-		} else {
+		case m.RowStyle != nil:
+			b.WriteString(m.RowStyle(m.view[idx]).Render(line))
+		default:
 			b.WriteString(rowStyle.Render(line))
 		}
 		b.WriteString("\n")
