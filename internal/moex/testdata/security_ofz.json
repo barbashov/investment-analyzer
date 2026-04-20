@@ -1,0 +1,16 @@
+{
+  "description": {
+    "columns": ["name", "title", "value"],
+    "data": [
+      ["SECID", "Код", "SU26238RMFS4"],
+      ["TYPE", "Тип", "ofz_bond"],
+      ["SECTYPE", "SECTYPE", "ofz_bond"]
+    ]
+  },
+  "boards": {
+    "columns": ["boardid", "market", "engine"],
+    "data": [
+      ["TQOB", "bonds", "stock"]
+    ]
+  }
+}

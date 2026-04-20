@@ -1,0 +1,16 @@
+{
+  "description": {
+    "columns": ["name", "title", "value"],
+    "data": [
+      ["SECID", "Код", "GLDRUB_TOM"],
+      ["TYPE", "Тип", "currency"],
+      ["SECTYPE", "SECTYPE", "currency"]
+    ]
+  },
+  "boards": {
+    "columns": ["boardid", "market", "engine"],
+    "data": [
+      ["CETS", "selt", "currency"]
+    ]
+  }
+}

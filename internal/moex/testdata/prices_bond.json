@@ -1,0 +1,13 @@
+{
+  "history": {
+    "columns": ["TRADEDATE", "SECID", "BOARDID", "LEGALCLOSEPRICE", "VOLUME"],
+    "data": [
+      ["2024-02-15", "SU26215RMFS2", "TQOB", 98.65, 10000],
+      ["2024-02-16", "SU26215RMFS2", "TQOB", 98.72, 15000]
+    ]
+  },
+  "history.cursor": {
+    "columns": ["INDEX", "TOTAL", "PAGESIZE"],
+    "data": [[0, 2, 100]]
+  }
+}

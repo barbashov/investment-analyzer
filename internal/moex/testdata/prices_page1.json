@@ -1,0 +1,13 @@
+{
+  "history": {
+    "columns": ["TRADEDATE", "SECID", "BOARDID", "CLOSE"],
+    "data": [
+      ["2024-01-03", "GAZP", "TQBR", 155.1],
+      ["2024-01-04", "GAZP", "TQBR", 156.0]
+    ]
+  },
+  "history.cursor": {
+    "columns": ["INDEX", "TOTAL", "PAGESIZE"],
+    "data": [[0, 4, 2]]
+  }
+}

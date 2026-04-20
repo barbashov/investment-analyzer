@@ -1,0 +1,19 @@
+{
+  "description": {
+    "columns": ["name", "title", "value"],
+    "data": [
+      ["SECID", "Код ценной бумаги", "SBER"],
+      ["ISIN", "ISIN код", "RU0009029540"],
+      ["TYPE", "Тип", "common_share"],
+      ["SECTYPE", "SECTYPE", "common_share"],
+      ["GROUP", "Группа инструментов", "stock_shares"]
+    ]
+  },
+  "boards": {
+    "columns": ["boardid", "market", "engine", "is_primary"],
+    "data": [
+      ["TQBR", "shares", "stock", 1],
+      ["SMAL", "shares", "stock", 0]
+    ]
+  }
+}
