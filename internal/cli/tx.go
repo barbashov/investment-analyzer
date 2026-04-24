@@ -97,7 +97,7 @@ func newTxAddCmd(ac *appContext) *cobra.Command {
 	}
 
 	pf := cmd.Flags()
-	pf.StringVar(&f.op, "op", "", "Operation: buy|sell|dividend|deposit|withdrawal|transfer|commission|fx-buy|fx-sell|income|tax")
+	pf.StringVar(&f.op, "op", "", "Operation: buy|sell|dividend|deposit|withdrawal|transfer|commission|fx-buy|fx-sell|security-in|security-out|income|tax")
 	pf.StringVar(&f.date, "date", "", "Date YYYY-MM-DD (required)")
 	pf.StringVar(&f.timeStr, "time", "", "Time HH:MM:SS (optional)")
 	pf.StringVar(&f.ticker, "ticker", "", "Ticker (e.g. SBER) — required for buy/sell/fx-*; optional for dividend")
@@ -131,7 +131,8 @@ func buildTxFromFlags(f *txAddFlags) (*store.Transaction, error) {
 	)
 
 	switch op {
-	case store.OpBuy, store.OpSell, store.OpFXBuy, store.OpFXSell:
+	case store.OpBuy, store.OpSell, store.OpFXBuy, store.OpFXSell,
+		store.OpSecurityIn, store.OpSecurityOut:
 		if f.ticker == "" {
 			return nil, fmt.Errorf("--ticker is required for %s", op)
 		}
@@ -140,7 +141,11 @@ func buildTxFromFlags(f *txAddFlags) (*store.Transaction, error) {
 		}
 		hasP := f.hasPrice && f.price > 0
 		hasA := f.hasAmount && f.amount > 0
-		if !hasP && !hasA {
+		// Custody transfers often don't carry a price — the counter-party may
+		// not disclose cost basis. Allow SECURITY_IN/OUT without --price or
+		// --amount; unit cost stays nil and book value from this lot is 0.
+		isSecurityTransfer := op == store.OpSecurityIn || op == store.OpSecurityOut
+		if !hasP && !hasA && !isSecurityTransfer {
 			return nil, fmt.Errorf("either --price or --amount is required for %s", op)
 		}
 		if hasP && hasA {
@@ -149,11 +154,15 @@ func buildTxFromFlags(f *txAddFlags) (*store.Transaction, error) {
 				return nil, fmt.Errorf("--amount %.2f conflicts with quantity*price = %.2f", f.amount, derived)
 			}
 		}
-		if hasP {
+		switch {
+		case hasP:
 			amt = f.quantity * f.price
 			price = ptrFloat(f.price)
-		} else {
+		case hasA:
 			price = ptrFloat(f.amount / f.quantity)
+		default:
+			// security-in/out with no price info: amount stays 0, price nil.
+			amt = 0
 		}
 		q := f.quantity
 		qty = &q
@@ -221,6 +230,10 @@ func normalizeOp(raw string) (store.OpType, string, error) {
 		return store.OpFXBuy, "Покупка валюты", nil
 	case "fx-sell", "fxsell":
 		return store.OpFXSell, "Продажа валюты", nil
+	case "security-in", "securityin", "sec-in":
+		return store.OpSecurityIn, "Зачисление ценных бумаг", nil
+	case "security-out", "securityout", "sec-out":
+		return store.OpSecurityOut, "Списание ценных бумаг", nil
 	case "income":
 		return store.OpIncome, "Доход", nil
 	case "tax":

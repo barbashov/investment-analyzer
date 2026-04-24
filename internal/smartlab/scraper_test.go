@@ -111,6 +111,54 @@ func TestFetchAnnouncements_404IsNotErrUnavailable(t *testing.T) {
 	}
 }
 
+func TestFetchAnnouncements_UnrecognizedPage(t *testing.T) {
+	// A 200 response with arbitrary HTML (layout change / CAPTCHA / wrong page)
+	// must not be treated as "ticker has no dividends" — that would let the
+	// updater wipe cached projections. Return ErrUnavailable so the cache
+	// stays intact.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><h1>Nothing to see here</h1></body></html>`))
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		HTTP:    srv.Client(),
+		BaseURL: srv.URL,
+		limiter: rate.NewLimiter(rate.Inf, 1),
+	}
+	got, err := c.FetchAnnouncements(context.Background(), "LKOH")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("want ErrUnavailable for unrecognized page, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("want nil rows on unrecognized page, got %d", len(got))
+	}
+}
+
+func TestFetchAnnouncements_RecognizedPageEmptyTicker(t *testing.T) {
+	// Serve the LKOH fixture (carries dividend-page markers) but ask for a
+	// ticker that doesn't appear in the table. This is the legitimate
+	// "no dividends known for this ticker" case — nil rows, no error.
+	body, _ := os.ReadFile(filepath.Join("testdata", "lkoh.html"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	c := &Client{
+		HTTP:    srv.Client(),
+		BaseURL: srv.URL,
+		limiter: rate.NewLimiter(rate.Inf, 1),
+	}
+	got, err := c.FetchAnnouncements(context.Background(), "ZZZZ")
+	if err != nil {
+		t.Fatalf("want nil error for recognized page with no matching rows, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("want nil rows when ticker absent, got %d", len(got))
+	}
+}
+
 func TestFetchAnnouncements_OKParses(t *testing.T) {
 	body, _ := os.ReadFile(filepath.Join("testdata", "lkoh.html"))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,5 +192,30 @@ func TestNormalizeTicker(t *testing.T) {
 	}
 	if NormalizeTicker("LKOH") != "LKOH" {
 		t.Errorf("LKOH should pass through, got %q", NormalizeTicker("LKOH"))
+	}
+	if NormalizeTicker("AGRO") != "RAGR" {
+		t.Errorf("AGRO should alias to RAGR, got %q", NormalizeTicker("AGRO"))
+	}
+}
+
+func TestParseHTML_AliasTicker(t *testing.T) {
+	// Smart-lab's /q/RAGR/ page tags rows with <td>AGRO</td> during the
+	// transition; after the rename, upcoming rows may switch to <td>RAGR</td>.
+	// ParseHTML must pick up rows under either symbol when the caller asks
+	// about AGRO (or vice-versa in the future).
+	html := `<table class="simple-little-table financials dividends">
+		<tr><th>Тикер</th><th>дата T-1</th><th>дата отсечки</th><th>Период</th><th>дивиденд</th><th>Цена акции</th><th>Див.доходность</th></tr>
+		<tr><td>RAGR</td><td>01.06.2026</td><td>02.06.2026</td><td>2025</td><td><strong>50</strong>₽</td><td>200</td><td>25%</td></tr>
+		<tr><td>AGRO</td><td>08.09.2021</td><td>10.09.2021</td><td>2кв 2021</td><td><strong>65,5</strong>₽</td><td>1205,2</td><td>5,4%</td></tr>
+	</table>`
+	got := ParseHTML("AGRO", html)
+	if len(got) != 2 {
+		t.Fatalf("want 2 rows (one under each tag), got %d", len(got))
+	}
+	// Reported ticker is always the caller's input, not the alias tag.
+	for _, a := range got {
+		if a.Ticker != "AGRO" {
+			t.Errorf("row ticker = %q, want AGRO", a.Ticker)
+		}
 	}
 }

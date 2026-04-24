@@ -24,7 +24,8 @@ func newFXCmd(ac *appContext) *cobra.Command {
 			}
 			defer func() { _ = st.Close() }()
 
-			txs, err := st.ListTransactions(ac.opts.From, ac.opts.To)
+			// Cumulative walk — must see all pre-window FX buys.
+			txs, err := st.ListTransactions("", ac.opts.To)
 			if err != nil {
 				return apperr.Wrap("store_query", "list transactions", 2, err)
 			}

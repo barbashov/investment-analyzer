@@ -37,7 +37,8 @@ func newCalendarCmd(ac *appContext) *cobra.Command {
 			cutoff := now.AddDate(0, 0, days).Format("2006-01-02")
 
 			type entry struct {
-				date      string
+				registry  string // registry close date
+				lastBuy   string // last trading day to buy (T-1); smart-lab only
 				ticker    string
 				period    string
 				source    string
@@ -62,13 +63,14 @@ func newCalendarCmd(ac *appContext) *cobra.Command {
 						continue
 					}
 					rows = append(rows, entry{
-						date:    d.RegistryDate,
-						ticker:  ticker,
-						period:  "—", // MOEX doesn't carry a period label
-						source:  "moex",
-						perShr:  d.Value,
-						qty:     pos.Quantity,
-						project: pos.Quantity * d.Value,
+						registry: d.RegistryDate,
+						lastBuy:  "—", // MOEX ISS doesn't publish T-1
+						ticker:   ticker,
+						period:   "—", // MOEX doesn't carry a period label
+						source:   "moex",
+						perShr:   d.Value,
+						qty:      pos.Quantity,
+						project:  pos.Quantity * d.Value,
 					})
 				}
 
@@ -84,7 +86,8 @@ func newCalendarCmd(ac *appContext) *cobra.Command {
 						continue
 					}
 					rows = append(rows, entry{
-						date:      sl.ExDate,
+						registry:  sl.ExDate,
+						lastBuy:   sl.T2Date,
 						ticker:    ticker,
 						period:    sl.Period,
 						source:    "smart-lab",
@@ -102,8 +105,8 @@ func newCalendarCmd(ac *appContext) *cobra.Command {
 			}
 
 			sort.SliceStable(rows, func(i, j int) bool {
-				if rows[i].date != rows[j].date {
-					return rows[i].date < rows[j].date
+				if rows[i].registry != rows[j].registry {
+					return rows[i].registry < rows[j].registry
 				}
 				return rows[i].ticker < rows[j].ticker
 			})
@@ -113,7 +116,8 @@ func newCalendarCmd(ac *appContext) *cobra.Command {
 			var totalConfirmed, totalProjected float64
 			for _, r := range rows {
 				cells = append(cells, []string{
-					r.date,
+					r.registry,
+					r.lastBuy,
 					r.ticker,
 					r.period,
 					r.source,
@@ -129,13 +133,16 @@ func newCalendarCmd(ac *appContext) *cobra.Command {
 				}
 			}
 			ui.PrintTableWithRowStyles(ac.out,
-				[]string{"DATE", "TICKER", "PERIOD", "SOURCE", "PER SHARE", "QTY", "PROJECTED"},
+				[]string{"REGISTRY", "LAST BUY", "TICKER", "PERIOD", "SOURCE", "PER SHARE", "QTY", "PROJECTED"},
 				cells, dim,
 			)
 			h := ui.NewHumanUI(ac.out)
 			_, _ = fmt.Fprintln(ac.out, h.Title(
 				fmt.Sprintf("Total gross, next %d days: %s confirmed  +  %s projected",
 					days, ui.FormatRUB(totalConfirmed), ui.FormatRUB(totalProjected)),
+			))
+			_, _ = fmt.Fprintln(ac.out, h.Muted(
+				"REGISTRY = registry close date; LAST BUY = last trading day to buy and still receive the dividend (smart-lab only)",
 			))
 			_, _ = fmt.Fprintln(ac.out, h.Muted(
 				"dim rows are smart-lab projections (board-recommended, not yet MOEX-confirmed)",

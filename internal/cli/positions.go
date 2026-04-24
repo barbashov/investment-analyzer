@@ -28,7 +28,9 @@ func newPositionsCmd(ac *appContext) *cobra.Command {
 			}
 			defer func() { _ = st.Close() }()
 
-			txs, err := st.ListTransactions(ac.opts.From, ac.opts.To)
+			// Positions are a cumulative walk — must see all pre-window buys.
+			// --to still bounds the snapshot date via ComputePositions.
+			txs, err := st.ListTransactions("", ac.opts.To)
 			if err != nil {
 				return apperr.Wrap("store_query", "list transactions", 2, err)
 			}

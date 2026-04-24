@@ -97,26 +97,55 @@ func (c *Client) FetchAnnouncements(ctx context.Context, ticker string) ([]Annou
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 
-	return ParseHTML(ticker, string(body)), nil
+	html := string(body)
+	if !looksLikeDividendPage(html) {
+		// 200 OK but no recognizable dividend-table markers — layout change,
+		// CAPTCHA, or some other non-dividend page. Treat as transient so the
+		// updater preserves cached projections instead of wiping them.
+		return nil, fmt.Errorf("%w: no dividend-page markers", ErrUnavailable)
+	}
+	return ParseHTML(ticker, html), nil
+}
+
+// looksLikeDividendPage reports whether `html` carries the markers we expect
+// on every smart-lab /q/{ticker}/dividend/ page. We require two independent
+// markers so one stray substring in an error page can't masquerade as valid.
+func looksLikeDividendPage(html string) bool {
+	return strings.Contains(html, "financials dividends") &&
+		strings.Contains(html, "дата отсечки")
 }
 
 // ParseHTML extracts dividend rows for `ticker` from a smart-lab dividend
-// page body. Exported so tests can exercise the parser without HTTP.
+// page body. Exported so tests can exercise the parser without HTTP. For
+// redomiciled tickers (see tickerAliases) rows tagged with either the original
+// or the alias symbol are both accepted — smart-lab mixes the two during the
+// transition. Parsed rows are always returned under the original `ticker`.
 func ParseHTML(ticker, html string) []Announcement {
 	ticker = strings.ToUpper(ticker)
-	marker := fmt.Sprintf("<td>%s</td>", ticker)
-	parts := strings.Split(html, marker)
-	if len(parts) < 2 {
-		return nil
-	}
-
 	var out []Announcement
-	for _, part := range parts[1:] {
-		a, ok := parseRow(ticker, part)
-		if !ok {
+	seen := map[string]struct{}{}
+	for _, tag := range tableTickersFor(ticker) {
+		marker := fmt.Sprintf("<td>%s</td>", tag)
+		parts := strings.Split(html, marker)
+		if len(parts) < 2 {
 			continue
 		}
-		out = append(out, a)
+		for _, part := range parts[1:] {
+			a, ok := parseRow(ticker, part)
+			if !ok {
+				continue
+			}
+			// Dedup across ticker variants on the same page — an individual row
+			// can only carry one tag, but the split-on-marker approach would
+			// otherwise double-count if the alias tag ever appeared inside a
+			// row whose leading cell already matched the primary tag.
+			key := a.T2Date + "|" + a.ExDate + "|" + a.Period
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, a)
+		}
 	}
 	return out
 }
